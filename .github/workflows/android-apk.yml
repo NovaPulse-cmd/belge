@@ -1,10 +1,11 @@
+
 name: Android APK Build
 
 on:
   workflow_dispatch:
     inputs:
       backend_base_url:
-        description: 'Gerçek backend HTTPS adresi (ör. https://alanadiniz.com)'
+        description: 'Gerçek backend HTTPS adresi'
         required: false
         type: string
   push:
@@ -58,29 +59,33 @@ jobs:
         shell: bash
         run: |
           MANIFEST="android/app/src/main/AndroidManifest.xml"
+
           if [ ! -f "$MANIFEST" ]; then
-            echo "ERROR: Android manifest not found at $MANIFEST"
+            echo "ERROR: Android manifest not found."
             exit 1
           fi
+
           python3 - <<'PY'
           from pathlib import Path
+
           p = Path("android/app/src/main/AndroidManifest.xml")
           s = p.read_text(encoding="utf-8")
           permission = '<uses-permission android:name="android.permission.INTERNET"/>'
+
           if permission not in s:
-              s = s.replace('<manifest ', '<manifest ', 1)
-              marker = '>'
-              pos = s.find(marker)
+              pos = s.find('>')
               if pos == -1:
-                  raise SystemExit("ERROR: Invalid AndroidManifest.xml")
+                  raise SystemExit("Invalid AndroidManifest.xml")
               s = s[:pos+1] + "\n    " + permission + s[pos+1:]
               p.write_text(s, encoding="utf-8")
-          print("Android INTERNET permission is present.")
+
+          print("Internet permission verified.")
           PY
 
       - name: Install Android SDK 36
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
+
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
             "platforms;android-36" \
             "build-tools;36.0.0"
@@ -95,8 +100,13 @@ jobs:
           from pathlib import Path
           import re
 
-          roots = [Path("android"), Path.home() / ".pub-cache" / "hosted" / "pub.dev"]
+          roots = [
+              Path("android"),
+              Path.home() / ".pub-cache" / "hosted" / "pub.dev"
+          ]
+
           gradle_files = []
+
           for root in roots:
               if root.exists():
                   gradle_files.extend(root.rglob("build.gradle"))
@@ -113,22 +123,29 @@ jobs:
                   original = file.read_text(encoding="utf-8")
               except (OSError, UnicodeDecodeError):
                   continue
+
               updated = original
+
               for pattern, replacement in patterns:
                   updated = re.sub(pattern, replacement, updated)
+
               if updated != original:
                   file.write_text(updated, encoding="utf-8")
 
           app_groovy = Path("android/app/build.gradle")
           app_kotlin = Path("android/app/build.gradle.kts")
+
           app_file = app_groovy if app_groovy.exists() else app_kotlin
+
           if not app_file.exists():
-              raise SystemExit("ERROR: Android app Gradle file was not generated.")
+              raise SystemExit("Android app Gradle file not found.")
 
           app_text = app_file.read_text(encoding="utf-8")
+
           if not re.search(r'(?m)^\s*compileSdk(?:Version)?(?:\s*=\s*|\s+)36\b', app_text):
-              raise SystemExit(f"ERROR: compileSdk 36 was not applied to {app_file}.")
-          print("Android app compileSdk is 36.")
+              raise SystemExit("compileSdk 36 was not applied.")
+
+          print("compileSdk 36 verified.")
           PY
 
       - name: Configure backend URL
@@ -139,58 +156,94 @@ jobs:
           SECRET_BACKEND_BASE_URL: ${{ secrets.BACKEND_BASE_URL }}
         shell: bash
         run: |
-          # Öncelik: workflow_dispatch girdisi > repository variable > repository secret.
           URL="${INPUT_BACKEND_BASE_URL:-${VARIABLE_BACKEND_BASE_URL:-${SECRET_BACKEND_BASE_URL:-}}}"
 
           if [ -z "$URL" ]; then
-            echo "WARNING: BACKEND_BASE_URL tanımlı değil."
-            echo "APK yine oluşturulacak; ancak AI, belge analizi ve iyzico Premium özellikleri backend adresi verilene kadar çalışmayacak."
-            URL="https://BACKEND-DOMAININIZ.example"
+            echo "ERROR: BACKEND_BASE_URL is missing."
+            echo "Add it under GitHub Settings > Secrets and variables > Actions > Variables."
+            exit 1
           fi
 
-          case "$URL" in
-            http://*|https://*) ;;
-            *)
-              echo "ERROR: BACKEND_BASE_URL must begin with http:// or https://"
-              echo "Verilen değer: $URL"
-              exit 1
-              ;;
-          esac
+          if [[ "$URL" != https://* ]]; then
+            echo "ERROR: Backend must use HTTPS."
+            exit 1
+          fi
+
+          URL="${URL%/}"
+
+          if [[ "$URL" == *".example"* || "$URL" == *"BACKEND-DOMAINININIZ"* ]]; then
+            echo "ERROR: Placeholder backend address is not allowed."
+            exit 1
+          fi
 
           echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "Backend URL configured."
 
-          if [[ "$URL" == *"BACKEND-DOMAININIZ.example"* || "$URL" == "https://example.com" ]]; then
-            echo "WARNING: Gerçek backend adresi yok. Build devam ediyor, fakat backend özellikleri devre dışı kalacak."
-          else
-            echo "Configured backend URL: $URL"
+      - name: Check backend health
+        env:
+          BACKEND_URL: ${{ steps.backend.outputs.url }}
+        shell: bash
+        run: |
+          HEALTH_URL="${BACKEND_URL}/health"
+
+          echo "Checking backend health..."
+
+          HTTP_CODE=$(curl -L -s -o /tmp/backend-health.json \
+            -w "%{http_code}" \
+            --connect-timeout 15 \
+            --max-time 30 \
+            "$HEALTH_URL" || true)
+
+          echo "Health HTTP status: $HTTP_CODE"
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "ERROR: Backend health check failed."
+            cat /tmp/backend-health.json || true
+            exit 1
           fi
+
+          cat /tmp/backend-health.json
+          echo "Backend health check passed."
 
       - name: Verify Flutter source
         shell: bash
         run: |
-          test -f lib/main.dart || { echo "ERROR: lib/main.dart bulunamadı"; exit 1; }
+          test -f lib/main.dart || {
+            echo "ERROR: lib/main.dart not found."
+            exit 1
+          }
+
           if grep -q "import 'config.dart';" lib/main.dart; then
-            echo "ERROR: lib/main.dart hâlâ config.dart içe aktarıyor."
+            echo "ERROR: main.dart still imports config.dart."
             exit 1
           fi
-          grep -q "class AppConfig" lib/main.dart || { echo "ERROR: AppConfig lib/main.dart içinde yok"; exit 1; }
-          echo "Flutter source OK: AppConfig main.dart içinde."
+
+          grep -q "class AppConfig" lib/main.dart || {
+            echo "ERROR: AppConfig not found in main.dart."
+            exit 1
+          }
+
+          echo "Flutter source verified."
 
       - name: Build release APK
+        env:
+          BACKEND_URL: ${{ steps.backend.outputs.url }}
         run: |
           flutter build apk --release --no-pub \
-            --dart-define=API_BASE_URL="${{ steps.backend.outputs.url }}"
+            --dart-define=API_BASE_URL="$BACKEND_URL"
 
       - name: Verify APK
         id: find_apk
         shell: bash
         run: |
           APK_PATH="build/app/outputs/flutter-apk/app-release.apk"
+
           if [ ! -s "$APK_PATH" ]; then
             echo "ERROR: Release APK was not created."
             find build android -type f -name '*.apk' -print 2>/dev/null || true
             exit 1
           fi
+
           echo "apk_path=$APK_PATH" >> "$GITHUB_OUTPUT"
           ls -lh "$APK_PATH"
 
