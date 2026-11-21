@@ -16,7 +16,6 @@ on:
       - 'pubspec.yaml'
       - 'pubspec.lock'
       - 'android/**'
-      - 'config.dart'
       - '.github/workflows/android-apk.yml'
 
 permissions:
@@ -165,6 +164,17 @@ jobs:
           else
             echo "Configured backend URL: $URL"
           fi
+
+      - name: Verify Flutter source
+        shell: bash
+        run: |
+          test -f lib/main.dart || { echo "ERROR: lib/main.dart bulunamadı"; exit 1; }
+          if grep -q "import 'config.dart';" lib/main.dart; then
+            echo "ERROR: lib/main.dart hâlâ config.dart içe aktarıyor."
+            exit 1
+          fi
+          grep -q "class AppConfig" lib/main.dart || { echo "ERROR: AppConfig lib/main.dart içinde yok"; exit 1; }
+          echo "Flutter source OK: AppConfig main.dart içinde."
 
       - name: Build release APK
         run: |
