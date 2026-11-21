@@ -87,21 +87,25 @@ jobs:
 
       - name: Check backend URL
         env:
-          BACKEND_BASE_URL: ${{ vars.BACKEND_BASE_URL }}
+          BACKEND_BASE_URL: ${{ vars.BACKEND_BASE_URL || 'https://example.com' }}
         run: |
           if [ -z "$BACKEND_BASE_URL" ]; then
-            echo "ERROR: GitHub repository variable BACKEND_BASE_URL is not set."
-            echo "Add it under Settings > Secrets and variables > Actions > Variables."
+            echo "ERROR: BACKEND_BASE_URL is empty."
             exit 1
           fi
           case "$BACKEND_BASE_URL" in
             http://*|https://*) ;;
             *) echo "ERROR: BACKEND_BASE_URL must start with http:// or https://"; exit 1 ;;
           esac
+          if [ "$BACKEND_BASE_URL" = "https://example.com" ]; then
+            echo "WARNING: BACKEND_BASE_URL is not configured; using https://example.com as a build-only fallback. Configure the real API URL for app backend features."
+          else
+            echo "Using configured backend URL."
+          fi
 
       - name: Build release APK
         env:
-          BACKEND_BASE_URL: ${{ vars.BACKEND_BASE_URL }}
+          BACKEND_BASE_URL: ${{ vars.BACKEND_BASE_URL || 'https://example.com' }}
         run: |
           flutter build apk --release --no-pub \
             --dart-define=API_BASE_URL="$BACKEND_BASE_URL"
