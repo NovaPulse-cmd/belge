@@ -34,29 +34,42 @@ jobs:
       - name: Install packages
         run: flutter pub get
 
+      - name: Fix file_picker compileSdk
+        run: |
+          FILE_PICKER_GRADLE=$(find ~/.pub-cache -path "*file_picker*/android/build.gradle" 2>/dev/null | head -n 1)
+          if [ -n "$FILE_PICKER_GRADLE" ]; then
+            echo "Düzeltiliyor: $FILE_PICKER_GRADLE"
+            sed -i 's/compileSdkVersion .*/compileSdkVersion 36/' "$FILE_PICKER_GRADLE"
+            sed -i 's/compileSdk .*/compileSdk 36/' "$FILE_PICKER_GRADLE"
+          else
+            echo "file_picker build.gradle bulunamadı, atlanıyor."
+          fi
+
       - name: Build release APK
         env:
           BACKEND_BASE_URL: ${{ vars.BACKEND_BASE_URL }}
         run: |
           BACKEND_BASE_URL="${BACKEND_BASE_URL:-https://example.com}"
           echo "Using BACKEND_BASE_URL=$BACKEND_BASE_URL"
-          flutter build apk --release --dart-define=API_BASE_URL="$BACKEND_BASE_URL" || true
-          echo "=== Searching for APK files ==="
-          find . -name "*.apk" -type f
+          flutter build apk --release --dart-define=API_BASE_URL="$BACKEND_BASE_URL"
 
-      - name: Find and upload APK
+      - name: Find APK
+        id: find_apk
         run: |
-          APK_PATH=$(find . -name "*.apk" -type f | head -n 1)
+          APK_PATH=$(find android/app/build/outputs -name "*.apk" -type f 2>/dev/null | head -n 1)
           if [ -z "$APK_PATH" ]; then
-            echo "ERROR: No APK file found anywhere!"
+            APK_PATH=$(find build -name "*.apk" -type f 2>/dev/null | head -n 1)
+          fi
+          if [ -z "$APK_PATH" ]; then
+            echo "ERROR: APK bulunamadı!"
             exit 1
           fi
           echo "Found APK: $APK_PATH"
-          echo "APK_PATH=$APK_PATH" >> $GITHUB_ENV
+          echo "apk_path=$APK_PATH" >> $GITHUB_OUTPUT
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: belge-asistani-android-apk
-          path: ${{ env.APK_PATH }}
+          path: ${{ steps.find_apk.outputs.apk_path }}
           if-no-files-found: error
