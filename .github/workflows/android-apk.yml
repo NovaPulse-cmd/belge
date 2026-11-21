@@ -11,6 +11,7 @@ on:
       - 'pubspec.yaml'
       - 'pubspec.lock'
       - 'android/**'
+      - 'config.dart'
       - '.github/workflows/android-apk.yml'
 
 permissions:
@@ -49,6 +50,30 @@ jobs:
       - name: Generate Android platform files
         run: flutter create . --platforms=android --org com.belgeasistani
 
+      - name: Ensure Android Internet permission
+        shell: bash
+        run: |
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          if [ ! -f "$MANIFEST" ]; then
+            echo "ERROR: Android manifest not found at $MANIFEST"
+            exit 1
+          fi
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("android/app/src/main/AndroidManifest.xml")
+          s = p.read_text(encoding="utf-8")
+          permission = '<uses-permission android:name="android.permission.INTERNET"/>'
+          if permission not in s:
+              s = s.replace('<manifest ', '<manifest ', 1)
+              marker = '>'
+              pos = s.find(marker)
+              if pos == -1:
+                  raise SystemExit("ERROR: Invalid AndroidManifest.xml")
+              s = s[:pos+1] + "\n    " + permission + s[pos+1:]
+              p.write_text(s, encoding="utf-8")
+          print("Android INTERNET permission is present.")
+          PY
+
       - name: Install Android SDK 36
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
@@ -59,8 +84,6 @@ jobs:
       - name: Install Flutter packages
         run: flutter pub get
 
-      # Set compileSdk in the actual Gradle project files before Gradle starts.
-      # No init script is used; this avoids the previous "too late to set compileSdk" error.
       - name: Set Android modules to compileSdk 36
         shell: bash
         run: |
@@ -68,10 +91,7 @@ jobs:
           from pathlib import Path
           import re
 
-          roots = [
-              Path("android"),
-              Path.home() / ".pub-cache" / "hosted" / "pub.dev",
-          ]
+          roots = [Path("android"), Path.home() / ".pub-cache" / "hosted" / "pub.dev"]
           gradle_files = []
           for root in roots:
               if root.exists():
@@ -84,7 +104,6 @@ jobs:
               (r'(?m)^(\s*compileSdk\s+)(?:flutter\.compileSdkVersion|\d+)(\s*(?://.*)?)$', r'\g<1>36\g<2>'),
           ]
 
-          changed = []
           for file in gradle_files:
               try:
                   original = file.read_text(encoding="utf-8")
@@ -95,7 +114,6 @@ jobs:
                   updated = re.sub(pattern, replacement, updated)
               if updated != original:
                   file.write_text(updated, encoding="utf-8")
-                  changed.append(str(file))
 
           app_groovy = Path("android/app/build.gradle")
           app_kotlin = Path("android/app/build.gradle.kts")
@@ -106,10 +124,6 @@ jobs:
           app_text = app_file.read_text(encoding="utf-8")
           if not re.search(r'(?m)^\s*compileSdk(?:Version)?(?:\s*=\s*|\s+)36\b', app_text):
               raise SystemExit(f"ERROR: compileSdk 36 was not applied to {app_file}.")
-
-          print("Gradle files updated:")
-          for item in changed:
-              print(f" - {item}")
           print("Android app compileSdk is 36.")
           PY
 
@@ -119,17 +133,17 @@ jobs:
           BACKEND_BASE_URL: ${{ vars.BACKEND_BASE_URL }}
         shell: bash
         run: |
-          URL="${BACKEND_BASE_URL:-https://example.com}"
+          URL="${BACKEND_BASE_URL:-}"
           case "$URL" in
             http://*|https://*) ;;
             *) echo "ERROR: BACKEND_BASE_URL must begin with http:// or https://"; exit 1 ;;
           esac
-          echo "url=$URL" >> "$GITHUB_OUTPUT"
-          if [ "$URL" = "https://example.com" ]; then
-            echo "WARNING: Using a build-only fallback URL. Set the real BACKEND_BASE_URL repository variable for backend features."
-          else
-            echo "Configured backend URL found."
+          if [ "$URL" = "https://example.com" ] || [[ "$URL" == *"BACKEND-DOMAININIZ.example"* ]]; then
+            echo "ERROR: BACKEND_BASE_URL still uses a placeholder. Set the real HTTPS backend address in Settings > Secrets and variables > Actions > Variables."
+            exit 1
           fi
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "Configured backend URL: $URL"
 
       - name: Build release APK
         run: |
