@@ -2,6 +2,11 @@ name: Android APK Build
 
 on:
   workflow_dispatch:
+    inputs:
+      backend_base_url:
+        description: 'Gerçek backend HTTPS adresi (ör. https://alanadiniz.com)'
+        required: false
+        type: string
   push:
     branches:
       - main
@@ -130,20 +135,36 @@ jobs:
       - name: Configure backend URL
         id: backend
         env:
-          BACKEND_BASE_URL: ${{ vars.BACKEND_BASE_URL }}
+          INPUT_BACKEND_BASE_URL: ${{ inputs.backend_base_url }}
+          VARIABLE_BACKEND_BASE_URL: ${{ vars.BACKEND_BASE_URL }}
+          SECRET_BACKEND_BASE_URL: ${{ secrets.BACKEND_BASE_URL }}
         shell: bash
         run: |
-          URL="${BACKEND_BASE_URL:-}"
+          # Öncelik: workflow_dispatch girdisi > repository variable > repository secret.
+          URL="${INPUT_BACKEND_BASE_URL:-${VARIABLE_BACKEND_BASE_URL:-${SECRET_BACKEND_BASE_URL:-}}}"
+
+          if [ -z "$URL" ]; then
+            echo "WARNING: BACKEND_BASE_URL tanımlı değil."
+            echo "APK yine oluşturulacak; ancak AI, belge analizi ve iyzico Premium özellikleri backend adresi verilene kadar çalışmayacak."
+            URL="https://BACKEND-DOMAININIZ.example"
+          fi
+
           case "$URL" in
             http://*|https://*) ;;
-            *) echo "ERROR: BACKEND_BASE_URL must begin with http:// or https://"; exit 1 ;;
+            *)
+              echo "ERROR: BACKEND_BASE_URL must begin with http:// or https://"
+              echo "Verilen değer: $URL"
+              exit 1
+              ;;
           esac
-          if [ "$URL" = "https://example.com" ] || [[ "$URL" == *"BACKEND-DOMAININIZ.example"* ]]; then
-            echo "ERROR: BACKEND_BASE_URL still uses a placeholder. Set the real HTTPS backend address in Settings > Secrets and variables > Actions > Variables."
-            exit 1
-          fi
+
           echo "url=$URL" >> "$GITHUB_OUTPUT"
-          echo "Configured backend URL: $URL"
+
+          if [[ "$URL" == *"BACKEND-DOMAININIZ.example"* || "$URL" == "https://example.com" ]]; then
+            echo "WARNING: Gerçek backend adresi yok. Build devam ediyor, fakat backend özellikleri devre dışı kalacak."
+          else
+            echo "Configured backend URL: $URL"
+          fi
 
       - name: Build release APK
         run: |
