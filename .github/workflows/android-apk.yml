@@ -31,15 +31,22 @@ jobs:
       - name: Generate Android platform files
         run: flutter create . --platforms=android --org com.belgeasistani
 
-      - name: Set compileSdk to 36
+      - name: Force compileSdk 36 for all subprojects
         run: |
-          find android/app -maxdepth 1 \( -name "build.gradle" -o -name "build.gradle.kts" \) -print0 | while IFS= read -r -d '' file; do
-            echo "Düzeltiliyor: $file"
-            perl -pi -e 's/compileSdk\s*=\s*flutter\.compileSdkVersion/compileSdk = 36/g' "$file"
-            perl -pi -e 's/compileSdkVersion\s+flutter\.compileSdkVersion/compileSdkVersion 36/g' "$file"
-          done
-          echo "=== compileSdk kontrolü ==="
-          grep -r "compileSdk" android/app/build.gradle* 2>/dev/null || echo "Dosya bulunamadı"
+          cat >> android/build.gradle << 'EOF'
+
+          subprojects {
+              afterEvaluate { project ->
+                  if (project.hasProperty('android')) {
+                      project.android {
+                          compileSdkVersion 36
+                      }
+                  }
+              }
+          }
+          EOF
+          echo "=== android/build.gradle son hali ==="
+          cat android/build.gradle
 
       - name: Install packages
         run: flutter pub get
