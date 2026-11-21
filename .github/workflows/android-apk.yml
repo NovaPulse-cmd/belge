@@ -33,18 +33,13 @@ jobs:
 
       - name: Set compileSdk to 36
         run: |
-          if [ -f android/app/build.gradle ]; then
-            echo "build.gradle bulundu, düzeltiliyor..."
-            sed -i 's/compileSdk = flutter.compileSdkVersion/compileSdk = 36/' android/app/build.gradle
-            sed -i 's/compileSdkVersion flutter.compileSdkVersion/compileSdkVersion 36/' android/app/build.gradle
-          elif [ -f android/app/build.gradle.kts ]; then
-            echo "build.gradle.kts bulundu, düzeltiliyor..."
-            sed -i 's/compileSdk = flutter.compileSdkVersion/compileSdk = 36/' android/app/build.gradle.kts
-          else
-            echo "HATA: android/app/ altında build.gradle veya build.gradle.kts bulunamadı!"
-            ls -la android/app/ 2>/dev/null || echo "android/app/ dizini yok"
-            exit 1
-          fi
+          find android/app -maxdepth 1 \( -name "build.gradle" -o -name "build.gradle.kts" \) -print0 | while IFS= read -r -d '' file; do
+            echo "Düzeltiliyor: $file"
+            perl -pi -e 's/compileSdk\s*=\s*flutter\.compileSdkVersion/compileSdk = 36/g' "$file"
+            perl -pi -e 's/compileSdkVersion\s+flutter\.compileSdkVersion/compileSdkVersion 36/g' "$file"
+          done
+          echo "=== compileSdk kontrolü ==="
+          grep -r "compileSdk" android/app/build.gradle* 2>/dev/null || echo "Dosya bulunamadı"
 
       - name: Install packages
         run: flutter pub get
