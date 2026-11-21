@@ -59,7 +59,7 @@ jobs:
           echo "Using BACKEND_BASE_URL=$BACKEND_BASE_URL"
           flutter build apk --release --dart-define=API_BASE_URL="$BACKEND_BASE_URL"
           echo "=== APK dosyalarını ara ==="
-          find build -name "*.apk" -type f 2>/dev/null || echo "APK bulunamadı"
+          find . -name "*.apk" -type f 2>/dev/null || echo "APK bulunamadı"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
@@ -67,6 +67,6 @@ jobs:
           name: belge-asistani-android-apk
           path: |
             build/app/outputs/flutter-apk/app-release.apk
-            build/app/outputs/apk/release/app-release.apk
-            build/app/outputs/apk/app-release.apk
+            android/app/build/outputs/apk/release/app-release.apk
+            **/*.apk
           if-no-files-found: error
