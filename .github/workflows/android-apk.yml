@@ -34,17 +34,6 @@ jobs:
       - name: Install packages
         run: flutter pub get
 
-      - name: Fix file_picker compileSdk
-        run: |
-          FILE_PICKER_GRADLE=$(find ~/.pub-cache -path "*file_picker*/android/build.gradle" 2>/dev/null | head -n 1)
-          if [ -n "$FILE_PICKER_GRADLE" ]; then
-            echo "Düzeltiliyor: $FILE_PICKER_GRADLE"
-            sed -i 's/compileSdkVersion .*/compileSdkVersion 36/' "$FILE_PICKER_GRADLE"
-            sed -i 's/compileSdk .*/compileSdk 36/' "$FILE_PICKER_GRADLE"
-          else
-            echo "file_picker build.gradle bulunamadı, atlanıyor."
-          fi
-
       - name: Build release APK
         env:
           BACKEND_BASE_URL: ${{ vars.BACKEND_BASE_URL }}
