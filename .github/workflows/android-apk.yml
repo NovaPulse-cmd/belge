@@ -31,23 +31,6 @@ jobs:
       - name: Generate Android platform files
         run: flutter create . --platforms=android --org com.belgeasistani
 
-      - name: Force compileSdk 36 for all subprojects
-        run: |
-          cat >> android/build.gradle << 'EOF'
-
-          subprojects {
-              afterEvaluate { project ->
-                  if (project.hasProperty('android')) {
-                      project.android {
-                          compileSdkVersion 36
-                      }
-                  }
-              }
-          }
-          EOF
-          echo "=== android/build.gradle son hali ==="
-          cat android/build.gradle
-
       - name: Install packages
         run: flutter pub get
 
@@ -57,16 +40,23 @@ jobs:
         run: |
           BACKEND_BASE_URL="${BACKEND_BASE_URL:-https://example.com}"
           echo "Using BACKEND_BASE_URL=$BACKEND_BASE_URL"
-          flutter build apk --release --dart-define=API_BASE_URL="$BACKEND_BASE_URL"
-          echo "=== APK dosyalarını ara ==="
-          find . -name "*.apk" -type f 2>/dev/null || echo "APK bulunamadı"
+          flutter build apk --release --dart-define=API_BASE_URL="$BACKEND_BASE_URL" || true
+          echo "=== Searching for APK files ==="
+          find . -name "*.apk" -type f
+
+      - name: Find and upload APK
+        run: |
+          APK_PATH=$(find . -name "*.apk" -type f | head -n 1)
+          if [ -z "$APK_PATH" ]; then
+            echo "ERROR: No APK file found anywhere!"
+            exit 1
+          fi
+          echo "Found APK: $APK_PATH"
+          echo "APK_PATH=$APK_PATH" >> $GITHUB_ENV
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: belge-asistani-android-apk
-          path: |
-            build/app/outputs/flutter-apk/app-release.apk
-            android/app/build/outputs/apk/release/app-release.apk
-            **/*.apk
+          path: ${{ env.APK_PATH }}
           if-no-files-found: error
