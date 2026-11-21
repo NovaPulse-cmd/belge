@@ -23,7 +23,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
       - name: Checkout source
@@ -56,59 +56,85 @@ jobs:
             "platforms;android-36" \
             "build-tools;36.0.0"
 
-      # Force compileSdk 36 for the app AND Android plugin subprojects.
-      # This resolves AAR metadata failures from dependencies requiring API 36.
-      - name: Configure Android subprojects to compile with SDK 36
-        run: |
-          mkdir -p "$HOME/.gradle/init.d"
-          cat > "$HOME/.gradle/init.d/force-android-sdk.gradle" <<'GRADLE'
-          gradle.beforeProject { project ->
-              project.plugins.withId('com.android.application') {
-                  project.afterEvaluate {
-                      def androidExtension = project.extensions.findByName('android')
-                      if (androidExtension != null) {
-                          androidExtension.compileSdkVersion(36)
-                      }
-                  }
-              }
-              project.plugins.withId('com.android.library') {
-                  project.afterEvaluate {
-                      def androidExtension = project.extensions.findByName('android')
-                      if (androidExtension != null) {
-                          androidExtension.compileSdkVersion(36)
-                      }
-                  }
-              }
-          }
-          GRADLE
-
       - name: Install Flutter packages
         run: flutter pub get
 
-      - name: Check backend URL
-        env:
-          BACKEND_BASE_URL: ${{ vars.BACKEND_BASE_URL || 'https://example.com' }}
+      # Set compileSdk in the actual Gradle project files before Gradle starts.
+      # No init script is used; this avoids the previous "too late to set compileSdk" error.
+      - name: Set Android modules to compileSdk 36
+        shell: bash
         run: |
-          if [ -z "$BACKEND_BASE_URL" ]; then
-            echo "ERROR: BACKEND_BASE_URL is empty."
-            exit 1
-          fi
-          case "$BACKEND_BASE_URL" in
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          roots = [
+              Path("android"),
+              Path.home() / ".pub-cache" / "hosted" / "pub.dev",
+          ]
+          gradle_files = []
+          for root in roots:
+              if root.exists():
+                  gradle_files.extend(root.rglob("build.gradle"))
+                  gradle_files.extend(root.rglob("build.gradle.kts"))
+
+          patterns = [
+              (r'(?m)^(\s*compileSdkVersion\s+)(?:flutter\.compileSdkVersion|\d+)(\s*(?://.*)?)$', r'\g<1>36\g<2>'),
+              (r'(?m)^(\s*compileSdk\s*=\s*)(?:flutter\.compileSdkVersion|\d+)(\s*(?://.*)?)$', r'\g<1>36\g<2>'),
+              (r'(?m)^(\s*compileSdk\s+)(?:flutter\.compileSdkVersion|\d+)(\s*(?://.*)?)$', r'\g<1>36\g<2>'),
+          ]
+
+          changed = []
+          for file in gradle_files:
+              try:
+                  original = file.read_text(encoding="utf-8")
+              except (OSError, UnicodeDecodeError):
+                  continue
+              updated = original
+              for pattern, replacement in patterns:
+                  updated = re.sub(pattern, replacement, updated)
+              if updated != original:
+                  file.write_text(updated, encoding="utf-8")
+                  changed.append(str(file))
+
+          app_groovy = Path("android/app/build.gradle")
+          app_kotlin = Path("android/app/build.gradle.kts")
+          app_file = app_groovy if app_groovy.exists() else app_kotlin
+          if not app_file.exists():
+              raise SystemExit("ERROR: Android app Gradle file was not generated.")
+
+          app_text = app_file.read_text(encoding="utf-8")
+          if not re.search(r'(?m)^\s*compileSdk(?:Version)?(?:\s*=\s*|\s+)36\b', app_text):
+              raise SystemExit(f"ERROR: compileSdk 36 was not applied to {app_file}.")
+
+          print("Gradle files updated:")
+          for item in changed:
+              print(f" - {item}")
+          print("Android app compileSdk is 36.")
+          PY
+
+      - name: Configure backend URL
+        id: backend
+        env:
+          BACKEND_BASE_URL: ${{ vars.BACKEND_BASE_URL }}
+        shell: bash
+        run: |
+          URL="${BACKEND_BASE_URL:-https://example.com}"
+          case "$URL" in
             http://*|https://*) ;;
-            *) echo "ERROR: BACKEND_BASE_URL must start with http:// or https://"; exit 1 ;;
+            *) echo "ERROR: BACKEND_BASE_URL must begin with http:// or https://"; exit 1 ;;
           esac
-          if [ "$BACKEND_BASE_URL" = "https://example.com" ]; then
-            echo "WARNING: BACKEND_BASE_URL is not configured; using https://example.com as a build-only fallback. Configure the real API URL for app backend features."
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          if [ "$URL" = "https://example.com" ]; then
+            echo "WARNING: Using a build-only fallback URL. Set the real BACKEND_BASE_URL repository variable for backend features."
           else
-            echo "Using configured backend URL."
+            echo "Configured backend URL found."
           fi
 
       - name: Build release APK
-        env:
-          BACKEND_BASE_URL: ${{ vars.BACKEND_BASE_URL || 'https://example.com' }}
         run: |
           flutter build apk --release --no-pub \
-            --dart-define=API_BASE_URL="$BACKEND_BASE_URL"
+            --dart-define=API_BASE_URL="${{ steps.backend.outputs.url }}"
 
       - name: Verify APK
         id: find_apk
@@ -116,7 +142,7 @@ jobs:
         run: |
           APK_PATH="build/app/outputs/flutter-apk/app-release.apk"
           if [ ! -s "$APK_PATH" ]; then
-            echo "ERROR: Release APK was not created at $APK_PATH"
+            echo "ERROR: Release APK was not created."
             find build android -type f -name '*.apk' -print 2>/dev/null || true
             exit 1
           fi
